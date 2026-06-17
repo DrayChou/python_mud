@@ -1,30 +1,79 @@
 """
-Ollama async client — stdlib only (urllib + asyncio executor).
+LLM async client — stdlib only (urllib + asyncio executor).
 
-Usage:
-    from engine.llm import chat
-    reply = await chat([{"role":"user","content":"你好"}], system="你是...")
+Supports:
+- Ollama `/api/chat`
+- OpenAI-compatible `/v1/chat/completions`
 """
 from __future__ import annotations
 import asyncio
 import json
 import urllib.request
-import urllib.error
 from typing import Optional
 
-from config import OLLAMA_URL, LLM_MODEL, LLM_TIMEOUT
+from config import LLM_API_KEY, LLM_API_TYPE, LLM_API_URL, LLM_MODEL, LLM_TIMEOUT
+
+
+def _resolve_llm_url() -> str:
+    url = (LLM_API_URL or "").rstrip("/")
+    if not url:
+        if LLM_API_TYPE == "openai":
+            return "http://127.0.0.1:1234/v1/chat/completions"
+        return "http://127.0.0.1:11434/api/chat"
+
+    if LLM_API_TYPE == "openai":
+        if url.endswith("/v1/chat/completions"):
+            return url
+        if url.endswith("/v1"):
+            return url + "/chat/completions"
+        if url.startswith("http://") or url.startswith("https://"):
+            if "/" not in url.split("://", 1)[1]:
+                return url + "/v1/chat/completions"
+        return url
+
+    if url.endswith("/api/chat"):
+        return url
+    if url.endswith("/api"):
+        return url + "/chat"
+    if url.startswith("http://") or url.startswith("https://"):
+        if "/" not in url.split("://", 1)[1]:
+            return url + "/api/chat"
+    return url
 
 
 def _sync_chat(model: str, messages: list[dict], timeout: int) -> str:
-    payload = json.dumps({"model": model, "messages": messages, "stream": False}).encode()
+    url = _resolve_llm_url()
+    headers = {"Content-Type": "application/json"}
+
+    if LLM_API_TYPE == "openai":
+        payload_obj = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "temperature": 0,
+            "max_tokens": 256,
+        }
+        if LLM_API_KEY:
+            headers["Authorization"] = f"Bearer {LLM_API_KEY}"
+    else:
+        payload_obj = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+        }
+
+    payload = json.dumps(payload_obj).encode()
     req = urllib.request.Request(
-        f"{OLLAMA_URL}/api/chat",
+        url,
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read())
+
+    if LLM_API_TYPE == "openai":
+        return data["choices"][0]["message"]["content"].strip()
     return data["message"]["content"].strip()
 
 
@@ -34,7 +83,7 @@ async def chat(
     model: str = LLM_MODEL,
     timeout: int = LLM_TIMEOUT,
 ) -> str:
-    """Async wrapper around Ollama /api/chat. Runs blocking I/O in executor."""
+    """Async wrapper around Ollama/OpenAI-compatible chat APIs."""
     full_messages = []
     if system:
         full_messages.append({"role": "system", "content": system})

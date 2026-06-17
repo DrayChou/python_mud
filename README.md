@@ -18,12 +18,30 @@
 
 ## 快速启动
 
-**环境要求**：Python 3.11+，无第三方依赖。
+**环境要求**：Python 3.11+。
+
+### 方式一：使用 uv（推荐）
 
 ```bash
 git clone https://github.com/vcalibrator/python_mud.git
 cd python_mud
-python main.py
+uv sync
+cp .env.example .env   # 可选：按需修改配置
+sh/check-env.sh
+sh/start.sh
+```
+
+> 当前仓库按“应用项目”使用 uv，不作为可发布 wheel/package 安装；因此 `uv sync` 只同步依赖，不会执行 editable 安装。
+
+### 方式二：使用 pip
+
+```bash
+git clone https://github.com/vcalibrator/python_mud.git
+cd python_mud
+python -m pip install -r requirements.txt
+cp .env.example .env   # 可选：按需修改配置
+sh/check-env.sh
+sh/start.sh
 ```
 
 启动后输出：
@@ -36,13 +54,14 @@ python main.py
 
 | 客户端 | 命令 / 设置 |
 |---|---|
-| Windows Telnet | `telnet localhost 7777`（需先 `chcp 936`） |
+| **Mudlet（推荐）** | 新建 Profile → Host: `localhost`，Port: `7777`，编码设为 UTF-8 |
+| Windows Telnet | `telnet localhost 7777` |
 | PuTTY | Host: `localhost`，Port: `7777`，Connection: Raw 或 Telnet |
-| MUSHclient | 新建连接 → localhost:7777，字符集 GBK |
+| MUSHclient | 新建连接 → localhost:7777，字符集 UTF-8 |
 | Python 测试 | 见 `测试连接` 小节 |
 
-> **编码说明**：服务器默认输出 GBK（CP936）以兼容中文 Windows Telnet。  
-> 如需 UTF-8 客户端（PuTTY 等），将 `config.py` 中 `CLIENT_ENCODING = "gbk"` 改为 `"utf-8"`。
+> **编码说明**：服务器默认输出 UTF-8。  
+> 如果你需要兼容老旧中文 Telnet/CP936 环境，可在 `.env` 中将 `CLIENT_ENCODING=utf-8` 改为 `gbk`。
 
 ---
 
@@ -52,6 +71,9 @@ python main.py
 python_mud/
 ├── main.py                  # 入口：asyncio.run(main())
 ├── config.py                # 全局配置（端口、编码、LLM 设置）
+├── sh/
+│   ├── start.sh             # 启动脚本（优先 uv，回退 python）
+│   └── check-env.sh         # 环境/端口/LLM 配置检查
 │
 ├── engine/                  # 引擎层（对应 Lua 版 MudOS/）
 │   ├── channel.py           # 频道广播（房间/全局）
@@ -59,8 +81,9 @@ python_mud/
 │   ├── timer.py             # 心跳系统（HeartOfWorld，1 秒 tick）
 │   ├── telnet.py            # Telnet 协议（IAC 剥离，ECHO/NAWS 协商）
 │   ├── network.py           # asyncio TCP 服务器，每连接一个 Task
-│   ├── llm.py               # Ollama 异步客户端（stdlib urllib + executor）
-│   └── llm_cmd.py           # 自然语言 → 游戏指令解析器
+│   ├── llm.py               # Ollama / OpenAI 兼容异步客户端（urllib + executor）
+│   ├── json_utils.py        # LLM JSON 宽松解析（json_repair + fallback）
+│   └── llm_cmd.py           # 自然语言 → 结构化 JSON → 游戏指令解析器
 │
 ├── world/                   # 世界层（对应 Lua 版 MudLib/）
 │   ├── space.py             # SpaceObject：容器层级基类（put/leave/search）
@@ -133,13 +156,13 @@ asyncio.run(main())
 ```
 玩家输入未识别指令
   → llm_cmd.parse_natural_command(player, text)
-      → Ollama /api/chat（qwen2.5:3b）
-      → 返回标准指令字符串（如 "go east"）
-      → dispatch 再次执行
+      → Ollama /api/chat 或 OpenAI 兼容 /v1/chat/completions
+      → 返回结构化 JSON（如 {"command":"go east"}）
+      → json_repair / fallback 解析后 dispatch 再次执行
 
 玩家 say <内容> 进入有 LlmNpc 的房间
   → LlmNpc.respond_to_say(player, message)
-      → 带 system_prompt + 对话历史 → Ollama
+      → 带 system_prompt + 对话历史 → Ollama / OpenAI 兼容接口
       → 广播 NPC 回复到房间频道
 ```
 
@@ -169,21 +192,61 @@ asyncio.run(main())
 
 ## 配置说明
 
-`config.py` 中所有可调参数：
+推荐通过项目根目录的 `.env` 配置运行参数；程序启动时会自动读取该文件。
 
-```python
-HOST            = "0.0.0.0"        # 监听地址
-PORT            = 7777              # 监听端口
-BORN_POINT      = "StationHall"    # 玩家出生/死亡后回归的房间 ID
-SAVE_DIR        = "./data/players"  # 玩家存档目录
+可先复制模板：
 
-CLIENT_ENCODING = "gbk"            # 客户端编码：中文 Telnet 用 "gbk"，现代终端用 "utf-8"
+```bash
+cp .env.example .env
+```
 
-LLM_ENABLED     = True             # 是否启用 LLM（AI NPC + 自然语言指令）
-LLM_MODEL       = "qwen2.5:3b"    # Ollama 模型名
-OLLAMA_URL      = "http://localhost:11434"
-LLM_TIMEOUT     = 30               # 单次请求超时（秒）
-LLM_MAX_HISTORY = 12               # 每个 NPC 保留的对话轮数
+关键配置项：
+
+```env
+# 服务监听
+MUD_BIND_HOST=0.0.0.0
+MUD_BIND_PORT=7777
+CLIENT_ENCODING=utf-8
+
+# LLM 开关与模型
+LLM_ENABLED=true
+LLM_MODEL=qwen2.5:3b
+LLM_API_TYPE=ollama
+LLM_API_URL=http://127.0.0.1:11434
+LLM_API_KEY=
+LLM_TIMEOUT=30
+LLM_MAX_HISTORY=12
+```
+
+说明：
+- `LLM_API_TYPE` 支持 `ollama` / `openai`
+- `LLM_API_URL` 支持填写 base URL
+  - Ollama 例：`http://127.0.0.1:11434`
+  - OpenAI 兼容例：`http://127.0.0.1:1234/v1`、`http://your-host:11435/v1`
+- OpenAI 兼容接口会自动补全到 `/v1/chat/completions`
+- 若不使用 `.env`，也可直接通过系统环境变量覆盖
+- 项目依赖 `json-repair` 来宽松解析 LLM 偶发返回的非标准 JSON
+
+### LM Studio 示例
+
+如果你本地开的是 LM Studio 的 OpenAI Compatible Server，可这样配置：
+
+```env
+LLM_ENABLED=true
+LLM_API_TYPE=openai
+LLM_API_URL=http://127.0.0.1:1234/v1
+LLM_MODEL=你在 LM Studio 中加载的模型名
+LLM_API_KEY=
+```
+
+如果你走的是局域网 / Tailscale 上的远端网关，也可以写成：
+
+```env
+LLM_ENABLED=true
+LLM_API_TYPE=openai
+LLM_API_URL=http://your-host:11435/v1
+LLM_MODEL=your-remote-model-name
+LLM_API_KEY=
 ```
 
 ---

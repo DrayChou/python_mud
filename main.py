@@ -12,3 +12,8 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\n[INFO] 服务器已关闭。")
+    except OSError as e:
+        if "address already in use" in str(e).lower():
+            print(f"[ERROR] 端口已被占用：{e}")
+        else:
+            print(f"[ERROR] 启动失败：{e}")
