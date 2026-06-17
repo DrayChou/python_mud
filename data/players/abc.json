@@ -1,0 +1,9 @@
+{
+  "user_name": "abc",
+  "pass_hash": "202cb962ac59075b964b07152d234b70",
+  "cur_room": "",
+  "hp": 100,
+  "max_hp": 100,
+  "inventory": [],
+  "equipment": {}
+}

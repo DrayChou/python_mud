@@ -1,0 +1,14 @@
+{
+  "user_name": "testuser1",
+  "pass_hash": "32250170a0dca92d53ec9624f336ca24",
+  "cur_room": "",
+  "hp": 100,
+  "max_hp": 100,
+  "inventory": [
+    {
+      "id": "rusty_knife",
+      "count": 1
+    }
+  ],
+  "equipment": {}
+}
